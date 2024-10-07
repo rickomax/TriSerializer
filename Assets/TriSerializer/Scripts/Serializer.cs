@@ -17,7 +17,8 @@ namespace TriSerializer
             { typeof(MeshRenderer), new MeshRendererSerializer() },
             { typeof(SkinnedMeshRenderer), new SkinnedMeshRendererSerializer() },
 
-            { typeof(Mesh), new MeshSerializer() }
+            { typeof(Mesh), new MeshSerializer() },
+            { typeof(Material), new MaterialSerializer() }
         };
 
         private static Dictionary<ObjectIdentifier, IObjectSerializer> ObjectDeserializers;
@@ -103,7 +104,7 @@ namespace TriSerializer
                 binaryWriter.Write(Shared.Version);
                 var components = gameObject.GetComponents<Component>();
                 foreach (var component in components)
-                { 
+                {
                     if (component is Transform transform)
                     {
                         foreach (var item in SerializeObject(serializationContext, transform.gameObject))
@@ -119,16 +120,16 @@ namespace TriSerializer
                         yield return item;
                     }
                 }
-                foreach (var component in components)
+                foreach (var resource in serializationContext.Resources)
                 {
-                    foreach (var item in SerializeObject(serializationContext, component))
+                    foreach (var item in SerializeObject(serializationContext, resource))
                     {
                         yield return item;
                     }
                 }
-                foreach (var resource in serializationContext.Resources)
+                foreach (var component in components)
                 {
-                    foreach (var item in SerializeObject(serializationContext, resource))
+                    foreach (var item in SerializeObject(serializationContext, component))
                     {
                         yield return item;
                     }

@@ -1,10 +1,10 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
 using static Unity.VisualScripting.Member;
-using static UnityEngine.Mesh;
 using Object = UnityEngine.Object;
 
 namespace TriSerializer
@@ -105,14 +105,62 @@ namespace TriSerializer
 
         public override IEnumerable CollectResources(SerializationContext serializationContext, MeshFilter source)
         {
+            foreach (var item in base.CollectResources(serializationContext, source))
+            {
+                yield return item;
+            }
+            serializationContext.AddResource(source.sharedMesh);
             serializationContext.AddResource(source.mesh);
             yield break;
+        }
+
+        public override IEnumerable Serialize(SerializationContext serializationContext, MeshFilter source)
+        {
+            foreach (var item in base.Serialize(serializationContext, source))
+            {
+                yield return item;
+            }
+            serializationContext.BinaryWriter.WriteReference(source.sharedMesh);
+            serializationContext.BinaryWriter.WriteReference(source.mesh);
+        }
+
+        public override IEnumerable Deserialize(SerializationContext serializationContext)
+        {
+            foreach (var item in base.Deserialize(serializationContext))
+            {
+                yield return item;
+            }
+            var destination = serializationContext.GameObject.AddComponent<MeshFilter>();
+            serializationContext.SetupDestination(destination);
+            destination.sharedMesh = serializationContext.ReadReference(destination.sharedMesh);
+            destination.mesh = serializationContext.ReadReference(destination.mesh);
         }
     }
 
     public class RendererSerializer<T> : ComponentSerializer<T> where T : Renderer
     {
-        protected void SerializeMeshData(SerializationContext serializationContext, T source)
+        public override IEnumerable CollectResources(SerializationContext serializationContext, T source)
+        {
+            var sharedMaterials = source.sharedMaterials;
+            if (sharedMaterials != null)
+            {
+                foreach (var sharedMaterial in sharedMaterials)
+                {
+                    serializationContext.AddResource(sharedMaterial);
+                }
+            }
+            var materials = source.materials;
+            if (materials != null)
+            {
+                foreach (var material in materials)
+                {
+                    serializationContext.AddResource(material);
+                }
+            }
+            yield break;
+        }
+
+        protected void SerializeRenderer(SerializationContext serializationContext, T source)
         {
             serializationContext.BinaryWriter.Write(source.bounds);
             serializationContext.BinaryWriter.Write(source.localBounds);
@@ -131,9 +179,35 @@ namespace TriSerializer
             serializationContext.BinaryWriter.Write(source.sortingLayerName);
             serializationContext.BinaryWriter.Write((int)source.lightProbeUsage);
             serializationContext.BinaryWriter.Write((int)source.shadowCastingMode);
+            var sharedMaterials = source.sharedMaterials;
+            if (sharedMaterials != null)
+            {
+                serializationContext.BinaryWriter.Write(sharedMaterials.Length);
+                for (var i = 0; i < sharedMaterials.Length; i++)
+                {
+                    serializationContext.BinaryWriter.WriteReference(sharedMaterials[i]);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
+            var materials = source.materials;
+            if (materials != null)
+            {
+                serializationContext.BinaryWriter.Write(materials.Length);
+                for (var i = 0; i < materials.Length; i++)
+                {
+                    serializationContext.BinaryWriter.WriteReference(materials[i]);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
         }
 
-        protected void DeserializeMeshData(SerializationContext serializationContext)
+        protected void DeserializeRenderer(SerializationContext serializationContext)
         {
             var destination = (Renderer)serializationContext.Destination;
 
@@ -154,6 +228,26 @@ namespace TriSerializer
             destination.sortingLayerName = serializationContext.BinaryReader.Read(destination.sortingLayerName);
             destination.lightProbeUsage = (LightProbeUsage)serializationContext.BinaryReader.Read((int)destination.lightProbeUsage);
             destination.shadowCastingMode = (ShadowCastingMode)serializationContext.BinaryReader.Read((int)destination.shadowCastingMode);
+            var sharedMaterialsCount = serializationContext.BinaryReader.ReadInt32();
+            if (sharedMaterialsCount > 0)
+            {
+                var sharedMaterials = new Material[sharedMaterialsCount];
+                for (var i = 0; i < sharedMaterialsCount; i++)
+                {
+                    sharedMaterials[i] = serializationContext.ReadReference(sharedMaterials[i]);
+                }
+                destination.sharedMaterials = sharedMaterials;
+            }
+            var materialsCount = serializationContext.BinaryReader.ReadInt32();
+            if (materialsCount > 0)
+            {
+                var materials = new Material[materialsCount];
+                for (var i = 0; i < materialsCount; i++)
+                {
+                    materials[i] = serializationContext.ReadReference(materials[i]);
+                }
+                destination.materials = materials;
+            }
         }
 
     }
@@ -169,13 +263,12 @@ namespace TriSerializer
                 yield return item;
             }
 
-            SerializeMeshData(serializationContext, source);
+            SerializeRenderer(serializationContext, source);
             serializationContext.BinaryWriter.WriteReference(source.additionalVertexStreams);
             serializationContext.BinaryWriter.WriteReference(source.enlightenVertexStream);
             serializationContext.BinaryWriter.Write((int)source.receiveGI);
             serializationContext.BinaryWriter.Write(source.scaleInLightmap);
             serializationContext.BinaryWriter.Write(source.stitchLightmapSeams);
-
 
             yield break;
         }
@@ -190,7 +283,7 @@ namespace TriSerializer
             var destination = serializationContext.GameObject.AddComponent<MeshRenderer>();
             serializationContext.SetupDestination(destination);
 
-            DeserializeMeshData(serializationContext);
+            DeserializeRenderer(serializationContext);
             destination.additionalVertexStreams = serializationContext.ReadReference(destination.additionalVertexStreams);
             destination.enlightenVertexStream = serializationContext.ReadReference(destination.enlightenVertexStream);
             destination.receiveGI = (ReceiveGI)serializationContext.BinaryReader.Read((int)destination.receiveGI);
@@ -227,34 +320,9 @@ namespace TriSerializer
         }
     }
 
-    public partial class MeshSerializer : ObjectSerializer<Mesh>
+    public class MeshSerializer : ObjectSerializer<Mesh>
     {
         public override ObjectIdentifier Identifier => "MSH";
-
-        private static int GetVertexAttributeFormatSize(VertexAttributeFormat format)
-        {
-            switch (format)
-            {
-                case VertexAttributeFormat.Float32:
-                    return 4;
-                case VertexAttributeFormat.Float16:
-                    return 2;
-                case VertexAttributeFormat.UNorm8:
-                case VertexAttributeFormat.SNorm8:
-                case VertexAttributeFormat.UInt8:
-                case VertexAttributeFormat.SInt8:
-                    return 1;
-                case VertexAttributeFormat.UNorm16:
-                case VertexAttributeFormat.SNorm16:
-                case VertexAttributeFormat.UInt16:
-                case VertexAttributeFormat.SInt16:
-                    return 2;
-                case VertexAttributeFormat.UInt32:
-                case VertexAttributeFormat.SInt32:
-                    return 4;
-            }
-            throw new ArgumentOutOfRangeException();
-        }
 
         public override IEnumerable Serialize(SerializationContext serializationContext, Mesh source)
         {
@@ -265,57 +333,164 @@ namespace TriSerializer
 
             if (!source.isReadable)
             {
-                serializationContext.BinaryWriter.Write(0);
+                serializationContext.BinaryWriter.Write(false);
                 yield break;
             }
-
-            var vertexDataSizePerStream = new Dictionary<int, int>();
-
-            // Vertex Attribute Descriptors
-            var vertexAttributeDescriptors = source.GetVertexAttributes();
-            serializationContext.BinaryWriter.Write(vertexAttributeDescriptors.Length);
-            for (var i = 0; i < vertexAttributeDescriptors.Length; i++)
+            else
             {
-                var vertexAttributeDescriptor = vertexAttributeDescriptors[i];
-                serializationContext.BinaryWriter.Write(vertexAttributeDescriptor.dimension);
-                serializationContext.BinaryWriter.Write(vertexAttributeDescriptor.stream);
-                serializationContext.BinaryWriter.Write((int)vertexAttributeDescriptor.attribute);
-                serializationContext.BinaryWriter.Write((int)vertexAttributeDescriptor.format);
-                vertexDataSizePerStream.TryAdd(vertexAttributeDescriptor.stream, 0);
-                vertexDataSizePerStream[vertexAttributeDescriptor.stream] += GetVertexAttributeFormatSize(vertexAttributeDescriptor.format) * vertexAttributeDescriptor.dimension;
+                serializationContext.BinaryWriter.Write(true);
             }
 
-            // Mesh Data Array
-            using (var meshDataArray = Mesh.AcquireReadOnlyMeshData(source))
+            if (source.HasVertexAttribute(VertexAttribute.Position))
             {
-                serializationContext.BinaryWriter.Write(meshDataArray.Length);
-                for (var i = 0; i < meshDataArray.Length; i++)
+                var list = serializationContext.GetTemporaryList<Vector3>();
+                source.GetVertices(list);
+                serializationContext.BinaryWriter.Write(list.Count);
+                foreach (var item in list)
                 {
-                    // Mesh Data
-                    var meshData = meshDataArray[i];
-                    foreach (var kvp in vertexDataSizePerStream)
-                    {
-                        Write(serializationContext.BinaryWriter, meshData, kvp.Value, kvp.Key);
-                    }
+                    serializationContext.BinaryWriter.Write(item);
                 }
             }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
 
-            // Sub Meshes Descriptors
+            if (source.HasVertexAttribute(VertexAttribute.Normal))
+            {
+                var list = serializationContext.GetTemporaryList<Vector3>();
+                source.GetNormals(list);
+                serializationContext.BinaryWriter.Write(list.Count);
+                foreach (var item in list)
+                {
+                    serializationContext.BinaryWriter.Write(item);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
+
+            if (source.HasVertexAttribute(VertexAttribute.Tangent))
+            {
+                var list = serializationContext.GetTemporaryList<Vector4>();
+                source.GetTangents(list);
+                serializationContext.BinaryWriter.Write(list.Count);
+                foreach (var item in list)
+                {
+                    serializationContext.BinaryWriter.Write(item);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
+
+
+            if (source.HasVertexAttribute(VertexAttribute.Color))
+            {
+                var list = serializationContext.GetTemporaryList<Color>();
+                source.GetColors(list);
+                serializationContext.BinaryWriter.Write(list.Count);
+                foreach (var item in list)
+                {
+                    serializationContext.BinaryWriter.Write(item);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
+
+            if (source.HasVertexAttribute(VertexAttribute.TexCoord0))
+            {
+                var list = serializationContext.GetTemporaryList<Vector2>();
+                source.GetUVs(0, list);
+                serializationContext.BinaryWriter.Write(list.Count);
+                foreach (var item in list)
+                {
+                    serializationContext.BinaryWriter.Write(item);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
+
+            if (source.HasVertexAttribute(VertexAttribute.TexCoord1))
+            {
+                var list = serializationContext.GetTemporaryList<Vector2>();
+                source.GetUVs(1, list);
+                serializationContext.BinaryWriter.Write(list.Count);
+                foreach (var item in list)
+                {
+                    serializationContext.BinaryWriter.Write(item);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
+
+            if (source.HasVertexAttribute(VertexAttribute.TexCoord2))
+            {
+                var list = serializationContext.GetTemporaryList<Vector2>();
+                source.GetUVs(2, list);
+                serializationContext.BinaryWriter.Write(list.Count);
+                foreach (var item in list)
+                {
+                    serializationContext.BinaryWriter.Write(item);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
+
+            if (source.HasVertexAttribute(VertexAttribute.TexCoord3))
+            {
+                var list = serializationContext.GetTemporaryList<Vector2>();
+                source.GetUVs(3, list);
+                serializationContext.BinaryWriter.Write(list.Count);
+                foreach (var item in list)
+                {
+                    serializationContext.BinaryWriter.Write(item);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
+
+            if (source.HasVertexAttribute(VertexAttribute.BlendIndices))
+            {
+                var list = serializationContext.GetTemporaryList<BoneWeight>();
+                source.GetBoneWeights(list);
+                serializationContext.BinaryWriter.Write(list.Count);
+                foreach (var item in list)
+                {
+                    serializationContext.BinaryWriter.Write(item);
+                }
+            }
+            else
+            {
+                serializationContext.BinaryWriter.Write(0);
+            }
+
+            serializationContext.BinaryWriter.Write((int)source.indexFormat);
+
             serializationContext.BinaryWriter.Write(source.subMeshCount);
             for (var i = 0; i < source.subMeshCount; i++)
             {
-                var subMeshDescriptor = source.GetSubMesh(i);
-                serializationContext.BinaryWriter.Write(subMeshDescriptor.baseVertex);
-                serializationContext.BinaryWriter.Write(subMeshDescriptor.firstVertex);
-                serializationContext.BinaryWriter.Write(subMeshDescriptor.indexCount);
-                serializationContext.BinaryWriter.Write(subMeshDescriptor.indexStart);
-                serializationContext.BinaryWriter.Write(subMeshDescriptor.vertexCount);
-                serializationContext.BinaryWriter.Write((int)subMeshDescriptor.topology);
-                serializationContext.BinaryWriter.Write(subMeshDescriptor.bounds);
+                var topology = source.GetTopology(i);
+                serializationContext.BinaryWriter.Write((int)topology);
+                var indices = source.GetTriangles(i);
+                serializationContext.BinaryWriter.Write(indices.Length);
+                for (var j = 0; j < indices.Length; j++)
+                {
+                    serializationContext.BinaryWriter.Write(indices[j]);
+                }
             }
-
-            // Skin Weight Buffer Layout
-            serializationContext.BinaryWriter.Write((int)source.skinWeightBufferLayout);
 
             // Bind Poses
             var bindPoses = source.GetBindposes();
@@ -340,9 +515,21 @@ namespace TriSerializer
                     var deltaNormals = new Vector3[source.vertexCount];
                     var deltaTangents = new Vector3[source.vertexCount];
                     source.GetBlendShapeFrameVertices(i, j, deltaVertices, deltaNormals, deltaTangents);
-                    serializationContext.BinaryWriter.Write(deltaVertices);
-                    serializationContext.BinaryWriter.Write(deltaNormals);
-                    serializationContext.BinaryWriter.Write(deltaTangents);
+                    serializationContext.BinaryWriter.Write(deltaVertices.Length);
+                    foreach (var item in deltaVertices)
+                    {
+                        serializationContext.BinaryWriter.Write(item);
+                    }
+                    serializationContext.BinaryWriter.Write(deltaNormals.Length);
+                    foreach (var item in deltaNormals)
+                    {
+                        serializationContext.BinaryWriter.Write(item);
+                    }
+                    serializationContext.BinaryWriter.Write(deltaTangents.Length);
+                    foreach (var item in deltaTangents)
+                    {
+                        serializationContext.BinaryWriter.Write(item);
+                    }
                 }
             }
 
@@ -362,39 +549,374 @@ namespace TriSerializer
 
             var mesh = new Mesh();
 
-            var vertexDataSizePerStream = new Dictionary<int, int>();
-
-            var vertexAttributeDescriptorLength = serializationContext.BinaryReader.ReadInt32();
-            var vertexAttributeDescriptors = new VertexAttributeDescriptor[vertexAttributeDescriptorLength];
-            for (var i = 0; i < vertexAttributeDescriptors.Length; i++)
+            var isReadable = serializationContext.BinaryReader.ReadBoolean();
+            if (!isReadable)
             {
-                var vertexAttributeDescriptor = vertexAttributeDescriptors[i];
-
-                vertexAttributeDescriptor.dimension = serializationContext.BinaryReader.Read(vertexAttributeDescriptor.dimension);
-                vertexAttributeDescriptor.stream = serializationContext.BinaryReader.Read(vertexAttributeDescriptor.stream);
-                vertexAttributeDescriptor.attribute = serializationContext.BinaryReader.ReadEnum(vertexAttributeDescriptor.attribute);
-                vertexAttributeDescriptor.format = serializationContext.BinaryReader.ReadEnum(vertexAttributeDescriptor.format);
-
-                vertexAttributeDescriptors[i] = vertexAttributeDescriptor;
-
-                vertexDataSizePerStream.TryAdd(vertexAttributeDescriptor.stream, 0);
-                vertexDataSizePerStream[vertexAttributeDescriptor.stream] += GetVertexAttributeFormatSize(vertexAttributeDescriptor.format) * vertexAttributeDescriptor.dimension;
+                yield break;
             }
 
-            var meshDataArrayLength = serializationContext.BinaryReader.ReadInt32();
-            using (var meshDataArray = Mesh.AllocateWritableMeshData(meshDataArrayLength))
+            var vertexCount = serializationContext.BinaryReader.ReadInt32();
+            if (vertexCount > 0)
             {
-                for (var i = 0; i < meshDataArray.Length; i++)
+                var nativeArray = serializationContext.GetNewNativeArray<Vector3>(vertexCount);
+                for (var i = 0; i < vertexCount; i++)
                 {
-                    // Mesh Data
-                    var meshData = meshDataArray[i];
-                    foreach (var kvp in vertexDataSizePerStream)
+                    nativeArray[i] = serializationContext.BinaryReader.Read(nativeArray[i]);
+                }
+                mesh.SetVertices(nativeArray);
+                nativeArray.Dispose();
+            }
+
+            var normalCount = serializationContext.BinaryReader.ReadInt32();
+            if (normalCount > 0)
+            {
+                var nativeArray = serializationContext.GetNewNativeArray<Vector3>(normalCount);
+                for (var i = 0; i < vertexCount; i++)
+                {
+                    nativeArray[i] = serializationContext.BinaryReader.Read(nativeArray[i]);
+                }
+                mesh.SetNormals(nativeArray);
+                nativeArray.Dispose();
+            }
+
+            var tangentCount = serializationContext.BinaryReader.ReadInt32();
+            if (tangentCount > 0)
+            {
+                var nativeArray = serializationContext.GetNewNativeArray<Vector4>(tangentCount);
+                for (var i = 0; i < vertexCount; i++)
+                {
+                    nativeArray[i] = serializationContext.BinaryReader.Read(nativeArray[i]);
+                }
+                mesh.SetTangents(nativeArray);
+                nativeArray.Dispose();
+            }
+
+            var colorCount = serializationContext.BinaryReader.ReadInt32();
+            if (colorCount > 0)
+            {
+                var nativeArray = serializationContext.GetNewNativeArray<Color>(colorCount);
+                for (var i = 0; i < vertexCount; i++)
+                {
+                    nativeArray[i] = serializationContext.BinaryReader.Read(nativeArray[i]);
+                }
+                mesh.SetColors(nativeArray);
+                nativeArray.Dispose();
+            }
+
+            var textCoordCount0 = serializationContext.BinaryReader.ReadInt32();
+            if (textCoordCount0 > 0)
+            {
+                var nativeArray = serializationContext.GetNewNativeArray<Vector2>(textCoordCount0);
+                for (var i = 0; i < vertexCount; i++)
+                {
+                    nativeArray[i] = serializationContext.BinaryReader.Read(nativeArray[i]);
+                }
+                mesh.SetUVs(0, nativeArray);
+                nativeArray.Dispose();
+            }
+
+            var textCoordCount1 = serializationContext.BinaryReader.ReadInt32();
+            if (textCoordCount1 > 0)
+            {
+                var nativeArray = serializationContext.GetNewNativeArray<Vector2>(textCoordCount1);
+                for (var i = 0; i < vertexCount; i++)
+                {
+                    nativeArray[i] = serializationContext.BinaryReader.Read(nativeArray[i]);
+                }
+                mesh.SetUVs(1, nativeArray);
+                nativeArray.Dispose();
+            }
+
+            var textCoordCount2 = serializationContext.BinaryReader.ReadInt32();
+            if (textCoordCount2 > 0)
+            {
+                var nativeArray = serializationContext.GetNewNativeArray<Vector2>(textCoordCount2);
+                for (var i = 0; i < vertexCount; i++)
+                {
+                    nativeArray[i] = serializationContext.BinaryReader.Read(nativeArray[i]);
+                }
+                mesh.SetUVs(2, nativeArray);
+                nativeArray.Dispose();
+            }
+
+            var textCoordCount3 = serializationContext.BinaryReader.ReadInt32();
+            if (textCoordCount3 > 0)
+            {
+                var nativeArray = serializationContext.GetNewNativeArray<Vector2>(textCoordCount3);
+                for (var i = 0; i < vertexCount; i++)
+                {
+                    nativeArray[i] = serializationContext.BinaryReader.Read(nativeArray[i]);
+                }
+                mesh.SetUVs(0, nativeArray);
+                nativeArray.Dispose();
+            }
+
+            var boneWeightCount = serializationContext.BinaryReader.ReadInt32();
+            if (boneWeightCount > 0)
+            {
+                var array = new BoneWeight[vertexCount];
+                for (var i = 0; i < vertexCount; i++)
+                {
+                    array[i] = serializationContext.BinaryReader.Read(array[i]);
+                }
+                mesh.boneWeights = array;
+            }
+
+            mesh.indexFormat = serializationContext.BinaryReader.ReadEnum(mesh.indexFormat);
+
+            mesh.subMeshCount = serializationContext.BinaryReader.Read(mesh.subMeshCount);
+
+            for (var i = 0; i < mesh.subMeshCount; i++)
+            {
+                var topology = (MeshTopology)serializationContext.BinaryReader.ReadInt32();
+                var indexCount = serializationContext.BinaryReader.ReadInt32();
+                var indices = serializationContext.GetNewNativeArray<int>(indexCount);
+                for (var j = 0; j < indexCount; j++)
+                {
+                    indices[j] = serializationContext.BinaryReader.Read(indices[j]);
+                }
+                mesh.SetIndices(indices, topology, i);
+                indices.Dispose();
+            }
+
+            // Bind Poses
+            var bindPoseCount = serializationContext.BinaryReader.ReadInt32();
+            if (bindPoseCount > 0)
+            {
+                var bindPoses = new Matrix4x4[bindPoseCount];
+                for (var i = 0; i < bindPoseCount; i++)
+                {
+                    bindPoses[i] = serializationContext.BinaryReader.Read(bindPoses[i]);
+                }
+                mesh.bindposes = bindPoses;
+            }
+
+            // Blend Shapes
+            var blendShapeCount = serializationContext.BinaryReader.ReadInt32();
+            for (var i = 0; i < blendShapeCount; i++)
+            {
+                var blendShapeName = serializationContext.BinaryReader.ReadString();
+                var frameCount = serializationContext.BinaryReader.ReadInt32();
+                for (var j = 0; j < frameCount; j++)
+                {
+                    var blendShapeFrameWeight = serializationContext.BinaryReader.ReadSingle();
+                    Vector3[] deltaVertices;
+                    var deltaVerticesCount = serializationContext.BinaryReader.ReadInt32();
+                    if (deltaVerticesCount > 0)
                     {
-                        Read(serializationContext.BinaryReader, meshData, kvp.Value, kvp.Key);
+                        deltaVertices = new Vector3[deltaVerticesCount];
+                        for (var k = 0; k < deltaVerticesCount; k++)
+                        {
+                            deltaVertices[k] = serializationContext.BinaryReader.Read(deltaVertices[k]);
+                        }
                     }
+                    else
+                    {
+                        deltaVertices = null;
+                    }
+                    Vector3[] deltaNormals;
+                    var deltaNormalsCount = serializationContext.BinaryReader.ReadInt32();
+                    if (deltaNormalsCount > 0)
+                    {
+                        deltaNormals = new Vector3[deltaNormalsCount];
+                        for (var k = 0; k < deltaNormalsCount; k++)
+                        {
+                            deltaNormals[k] = serializationContext.BinaryReader.Read(deltaNormals[k]);
+                        }
+                    }
+                    else
+                    {
+                        deltaNormals = null;
+                    }
+                    Vector3[] deltaTangents;
+                    var deltaTangentsCount = serializationContext.BinaryReader.ReadInt32();
+                    if (deltaTangentsCount > 0)
+                    {
+                        deltaTangents = new Vector3[deltaTangentsCount];
+                        for (var k = 0; k < deltaTangentsCount; k++)
+                        {
+                            deltaTangents[k] = serializationContext.BinaryReader.Read(deltaTangents[k]);
+                        }
+                    }
+                    else
+                    {
+                        deltaTangents = null;
+                    }
+                    mesh.AddBlendShapeFrame(blendShapeName, blendShapeFrameWeight, deltaVertices, deltaNormals, deltaTangents);
                 }
             }
 
+            // Bounds
+            mesh.bounds = serializationContext.BinaryReader.Read(mesh.bounds);
+
+            // Name
+            mesh.name = serializationContext.BinaryReader.Read(mesh.name);
+
+            mesh.UploadMeshData(false);
+
+            serializationContext.AddObject(serializationContext.InstanceId, mesh);
+        }
+    }
+
+
+    public class MaterialSerializer : ObjectSerializer<Material>
+    {
+        public override ObjectIdentifier Identifier => "MAT";
+
+        public override IEnumerable Serialize(SerializationContext serializationContext, Material source)
+        {
+            foreach (var item in base.Serialize(serializationContext, source))
+            {
+                yield return item;
+            }
+
+            var shader = source.shader;
+
+            serializationContext.BinaryWriter.Write(shader.name);
+
+            var floatProperties = source.GetPropertyNames(MaterialPropertyType.Float);
+            serializationContext.BinaryWriter.Write(floatProperties.Length);
+            for (var i = 0; i < floatProperties.Length; i++)
+            {
+                var property = Shader.PropertyToID(floatProperties[i]);
+                serializationContext.BinaryWriter.Write(property);
+                serializationContext.BinaryWriter.Write(source.GetFloat(property));
+            }
+
+            var intProperties = source.GetPropertyNames(MaterialPropertyType.Int);
+            serializationContext.BinaryWriter.Write(intProperties.Length);
+            for (var i = 0; i < intProperties.Length; i++)
+            {
+                var property = Shader.PropertyToID(intProperties[i]);
+                serializationContext.BinaryWriter.Write(property);
+                serializationContext.BinaryWriter.Write(source.GetInt(property));
+            }
+
+            var vectorProperties = source.GetPropertyNames(MaterialPropertyType.Vector);
+            serializationContext.BinaryWriter.Write(vectorProperties.Length);
+            for (var i = 0; i < vectorProperties.Length; i++)
+            {
+                var property = Shader.PropertyToID(vectorProperties[i]);
+                serializationContext.BinaryWriter.Write(property);
+                serializationContext.BinaryWriter.Write(source.GetVector(property));
+            }
+
+            var matrixProperties = source.GetPropertyNames(MaterialPropertyType.Matrix);
+            serializationContext.BinaryWriter.Write(matrixProperties.Length);
+            for (var i = 0; i < matrixProperties.Length; i++)
+            {
+                var property = Shader.PropertyToID(matrixProperties[i]);
+                serializationContext.BinaryWriter.Write(property);
+                serializationContext.BinaryWriter.Write(source.GetMatrix(property));
+            }
+
+            var textureProperties = source.GetPropertyNames(MaterialPropertyType.Texture);
+            serializationContext.BinaryWriter.Write(textureProperties.Length);
+            for (var i = 0; i < textureProperties.Length; i++)
+            {
+                var property = Shader.PropertyToID(textureProperties[i]);
+                serializationContext.BinaryWriter.Write(property);
+                serializationContext.BinaryWriter.WriteReference(source.GetTexture(property));
+            }
+
+            serializationContext.BinaryWriter.Write(source.doubleSidedGI);
+
+            var enabledKeywords = source.enabledKeywords;
+            serializationContext.BinaryWriter.Write(enabledKeywords.Length);
+            for (var i = 0; i < enabledKeywords.Length; i++)
+            {
+                serializationContext.BinaryWriter.Write(enabledKeywords[i].name);
+            }
+
+            serializationContext.BinaryWriter.Write(source.enableInstancing);
+
+            serializationContext.BinaryWriter.Write((int)source.globalIlluminationFlags);
+
+            serializationContext.BinaryWriter.WriteReference(source.parent);
+
+            serializationContext.BinaryWriter.Write(source.renderQueue);
+        }
+
+        public override IEnumerable Deserialize(SerializationContext serializationContext)
+        {
+            foreach (var item in base.Deserialize(serializationContext))
+            {
+                yield return item;
+            }
+            
+            var shaderName = serializationContext.BinaryReader.ReadString();
+
+            var shader = Shader.Find(shaderName);
+
+            Debug.Assert(shader != null);
+
+            var material = new Material(shader);
+
+            var floatPropertiesCount = serializationContext.BinaryReader.ReadInt32();
+            for (var i = 0; i < floatPropertiesCount; i++)
+            {
+                var property = serializationContext.BinaryReader.ReadInt32();
+                float value = default;
+                value = serializationContext.BinaryReader.Read(value);
+                material.SetFloat(property, value);
+            }
+
+            var intPropertiesCount = serializationContext.BinaryReader.ReadInt32();
+            for (var i = 0; i < intPropertiesCount; i++)
+            {
+                var property = serializationContext.BinaryReader.ReadInt32();
+                int value = default;
+                value = serializationContext.BinaryReader.Read(value);
+                material.SetInt(property, value);
+            }
+
+            var vectorPropertiesCount = serializationContext.BinaryReader.ReadInt32();
+            for (var i = 0; i < vectorPropertiesCount; i++)
+            {
+                var property = serializationContext.BinaryReader.ReadInt32();
+                Vector4 value = default;
+                value = serializationContext.BinaryReader.Read(value);
+                material.SetVector(property, value);
+            }
+
+            var matrixPropertiesCount = serializationContext.BinaryReader.ReadInt32();
+            for (var i = 0; i < matrixPropertiesCount; i++)
+            {
+                var property = serializationContext.BinaryReader.ReadInt32();
+                Matrix4x4 value = default;
+                value = serializationContext.BinaryReader.Read(value);
+                material.SetMatrix(property, value);
+            }
+
+            var texturePropertiesCount = serializationContext.BinaryReader.ReadInt32();
+            for (var i = 0; i < texturePropertiesCount; i++)
+            {
+                var property = serializationContext.BinaryReader.ReadInt32();
+                Texture value = default;
+                value = serializationContext.ReadReference(value);
+                material.SetTexture(property, value);
+            }
+
+            material.doubleSidedGI = serializationContext.BinaryReader.Read(material.doubleSidedGI);
+
+            var enabledKeywordsLength = serializationContext.BinaryReader.ReadInt32();
+            var enabledkeyWords = new LocalKeyword[enabledKeywordsLength];
+            for (var i = 0; i < enabledKeywordsLength; i++)
+            {
+                var keyword = serializationContext.BinaryReader.ReadString();
+                enabledkeyWords[i] = new LocalKeyword(shader, keyword);
+            }
+            material.enabledKeywords = enabledkeyWords;
+
+            material.enableInstancing = serializationContext.BinaryReader.Read(material.enableInstancing);
+
+            material.globalIlluminationFlags = serializationContext.BinaryReader.ReadEnum(material.globalIlluminationFlags);
+
+            material.parent = serializationContext.ReadReference<Material>();
+
+            material.renderQueue = serializationContext.BinaryReader.Read(material.renderQueue);
+
+            serializationContext.AddObject(serializationContext.InstanceId, material);
         }
     }
 

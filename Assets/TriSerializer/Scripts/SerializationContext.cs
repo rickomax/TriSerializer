@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using Unity.Collections;
 using UnityEngine;
 
 namespace TriSerializer
@@ -14,6 +15,8 @@ namespace TriSerializer
         public int InstanceId { get; internal set; }
         public Dictionary<int, Object> Objects { get; private set; }
         public HashSet<Object> Resources { get; private set; }
+
+        private readonly Dictionary<System.Type, object> _temporaryLists = new Dictionary<System.Type, object>();
 
         public void AddObject(int instanceId, Object value)
         {
@@ -61,6 +64,24 @@ namespace TriSerializer
            Destination = destination;
            Destination.hideFlags = HideFlags;
            AddObject(InstanceId, destination);
+        }
+
+        public List<T> GetTemporaryList<T>()
+        {
+            var type = typeof(T);
+            if (!_temporaryLists.TryGetValue(type, out var list))
+            {
+                list = new List<T>();
+                _temporaryLists[type] = list;
+            }
+            var resultList = (List<T>)_temporaryLists[type];
+            resultList.Clear();
+            return resultList;
+        }
+
+        public NativeArray<T> GetNewNativeArray<T>(int length) where T : unmanaged
+        {
+            return new NativeArray<T>(length, Allocator.Persistent);
         }
     }
 }

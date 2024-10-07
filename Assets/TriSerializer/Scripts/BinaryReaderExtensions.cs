@@ -40,6 +40,13 @@ namespace TriSerializer
         {
             return binaryReader.ReadString();
         }
+        public static Vector2 Read(this BinaryReader binaryReader, Vector2 value)
+        {
+            var vector = new Vector2();
+            vector.x = Read(binaryReader, vector.x);
+            vector.y = Read(binaryReader, vector.y);
+            return vector;
+        }
 
         public static Vector3 Read(this BinaryReader binaryReader, Vector3 value)
         {
@@ -49,6 +56,17 @@ namespace TriSerializer
             vector.z = Read(binaryReader, vector.z);
             return vector;
         }
+
+        public static Vector4 Read(this BinaryReader binaryReader, Vector4 value)
+        {
+            var vector = new Vector4();
+            vector.x = Read(binaryReader, vector.x);
+            vector.y = Read(binaryReader, vector.y);
+            vector.z = Read(binaryReader, vector.z);
+            vector.w = Read(binaryReader, vector.w);
+            return vector;
+        }
+
         public static Quaternion Read(this BinaryReader binaryReader, Quaternion value)
         {
             var quaternion = new Quaternion();
@@ -57,6 +75,30 @@ namespace TriSerializer
             quaternion.z = Read(binaryReader, quaternion.z);
             quaternion.w = Read(binaryReader, quaternion.w);
             return quaternion;
+        }
+
+        public static Matrix4x4 Read(this BinaryReader binaryReader, Matrix4x4 value)
+        {
+            var matrix = new Matrix4x4();
+            for (var i = 0; i < 16; i++)
+            {
+                matrix[i] = Read(binaryReader, matrix[i]);
+            }
+            return matrix;
+        }
+
+        public static BoneWeight Read(this BinaryReader binaryReader, BoneWeight value)
+        {
+            var boneWeight = new BoneWeight();
+            boneWeight.weight0 = Read(binaryReader, boneWeight.weight0);
+            boneWeight.weight1 = Read(binaryReader, boneWeight.weight1);
+            boneWeight.weight2 = Read(binaryReader, boneWeight.weight2);
+            boneWeight.weight3 = Read(binaryReader, boneWeight.weight3);
+            boneWeight.boneIndex0 = Read(binaryReader, boneWeight.boneIndex0);
+            boneWeight.boneIndex1 = Read(binaryReader, boneWeight.boneIndex1);
+            boneWeight.boneIndex2 = Read(binaryReader, boneWeight.boneIndex2);
+            boneWeight.boneIndex3 = Read(binaryReader, boneWeight.boneIndex3);
+            return boneWeight;
         }
 
         public static Bounds Read(this BinaryReader binaryReader, Bounds value)
