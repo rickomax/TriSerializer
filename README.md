@@ -133,8 +133,6 @@ public class CustomComponentSerializer : ComponentSerializer<CustomComponent>
 ## Notes
 
 - **Readability**: Types like `Mesh` and `Texture2D` require `isReadable` to be true, or serialization will fail with an error.
-- **Performance**: Uses coroutines via `CoroutineHelper` for asynchronous operations. Ensure proper resource cleanup with `Resources.UnloadUnusedAssets()`.
-
 
 ## License
 
