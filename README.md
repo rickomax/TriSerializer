@@ -130,6 +130,11 @@ public class CustomComponentSerializer : ComponentSerializer<CustomComponent>
 }
 ```
 
+## This project uses
+SharpZipLib (MIT)
+
+https://github.com/icsharpcode/SharpZipLib
+
 ## Notes
 
 - **Readability**: Types like `Mesh` and `Texture2D` require `isReadable` to be true, or serialization will fail with an error.
