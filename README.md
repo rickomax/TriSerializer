@@ -6,7 +6,7 @@ TriSerializer is an evolving Unity serialization framework for serializing and d
 - Animation Clips serialization
 - Cameras serialization
 - Lights serialization
-- Physics components (colliders, rigidbodies, etc)
+- Physics components (colliders, rigidbodies, etc) serialization
 
 Contributions and feedback are welcome.
 
